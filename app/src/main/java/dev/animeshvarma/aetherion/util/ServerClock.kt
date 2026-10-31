@@ -1,25 +1,28 @@
 package dev.animeshvarma.aetherion.util
 
-import java.time.Instant
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.atomic.AtomicLong
 
-/**
- * The #PWD_INSTAGRAM timestamp is used as AES-GCM AAD by the server.
- * A device clock that drifts from server time corrupts decryption → bad_password.
- * Compute a one-time offset from any response's `Date` header.
- */
 object ServerClock {
-    @Volatile
-    private var offsetSeconds: Long = 0L
+    private val skewMillis = AtomicLong(0L)
+    private val httpDateFormat = SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("GMT")
+    }
 
     fun sync(dateHeader: String?) {
         if (dateHeader.isNullOrBlank()) return
         try {
-            val serverMs = DateTimeFormatter.RFC_1123_DATE_TIME
-                .parse(dateHeader, Instant::from).toEpochMilli()
-            offsetSeconds = (serverMs - System.currentTimeMillis()) / 1000
-        } catch (_: Exception) { /* keep offset 0 */ }
+            val serverTime = synchronized(httpDateFormat) {
+                httpDateFormat.parse(dateHeader)?.time
+            } ?: return
+            skewMillis.set(serverTime - System.currentTimeMillis())
+        } catch (_: Exception) {
+        }
     }
 
-    fun epochSeconds(): Long = System.currentTimeMillis() / 1000 + offsetSeconds
+    fun nowMillis(): Long = System.currentTimeMillis() + skewMillis.get()
+
+    fun epochSeconds(): Long = nowMillis() / 1000L
 }

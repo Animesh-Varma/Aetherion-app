@@ -2,6 +2,7 @@ package dev.animeshvarma.aetherion.crypto
 
 import android.util.Base64
 import dev.animeshvarma.aetherion.network.interceptors.LoggingInterceptor
+import dev.animeshvarma.aetherion.util.DeviceFingerprint
 import java.math.BigInteger
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -14,9 +15,14 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+/**
+ * #PWD_INSTAGRAM:4
+ * payload = 0x01 | keyId(1B) | iv(12B) | rsaLen(2B LE) | rsa(sessionKey) | gcmTag(16B) | aesGcmCt
+ * RSA/ECB/PKCS1Padding over the 32-byte session key with the pubkey from
+ * `ig-set-password-encryption-pub-key` (delivered by GET qe/sync).
+ */
 object PasswordEncryptor {
 
-    private const val VERSION = 4
     private const val SESSION_KEY_SIZE = 32
     private const val IV_SIZE = 12
     private const val TAG_BITS = 128
@@ -25,28 +31,28 @@ object PasswordEncryptor {
     @Volatile private var keyId: Int? = null
     @Volatile private var pubKeyBase64: String? = null
 
-    fun syncFromHeaders(keyIdHeader: String?, pubKeyHeader: String?) {
-        keyIdHeader?.trim()?.toIntOrNull()?.let { keyId = it }
-        pubKeyHeader?.trim()?.takeIf { it.isNotEmpty() }?.let { pubKeyBase64 = it }
+    fun restoreFromDeviceFingerprint(fp: DeviceFingerprint) {
+        if (keyId == null && fp.pwdKeyId.isNotBlank()) keyId = fp.pwdKeyId.toIntOrNull()
+        if (pubKeyBase64.isNullOrBlank() && fp.pwdPubKey.isNotBlank()) pubKeyBase64 = fp.pwdPubKey
+    }
 
-        // Surface what we actually received, so we can confirm the real format.
-        val shown = pubKeyBase64?.take(24) ?: "MISSING"
-        val len = pubKeyBase64?.length ?: 0
-        LoggingInterceptor.logNetwork(
-            "PWD",
-            "pub-key header (b64 len=$len): '$shown...' keyId=$keyId"
-        )
+    fun syncFromHeaders(keyIdHeader: String?, pubKeyHeader: String?, fp: DeviceFingerprint?) {
+        keyIdHeader?.trim()?.toIntOrNull()?.let { keyId = it; fp?.pwdKeyId = it.toString() }
+        pubKeyHeader?.trim()?.takeIf { it.isNotEmpty() }?.let { pubKeyBase64 = it; fp?.pwdPubKey = it }
+        if (!keyIdHeader.isNullOrBlank() || !pubKeyHeader.isNullOrBlank()) {
+            LoggingInterceptor.logNetwork(
+                "PWD", "RSA key synced: keyId=$keyId, pubKeyLen=${pubKeyBase64?.length ?: 0}"
+            )
+        }
     }
 
     fun isAvailable(): Boolean = keyId != null && !pubKeyBase64.isNullOrBlank()
-    fun debugKeyId(): String = keyId?.toString() ?: "none"
 
     fun encryptPassword(password: String, timestamp: String): String {
-        val keyId = keyId ?: error("Password encryption key not synced")
+        val currentKeyId = keyId ?: error("pwd key id not synced")
         val publicKey = buildRsaPublicKey(pubKeyBase64!!)
-            ?: throw IllegalStateException("Could not build RSA public key from IG header")
+            ?: error("cannot parse ig-set-password-encryption-pub-key")
 
-        // ---- everything below is unchanged & byte-correct ----
         val sr = SecureRandom()
         val sessionKey = ByteArray(SESSION_KEY_SIZE).also { sr.nextBytes(it) }
         val iv = ByteArray(IV_SIZE).also { sr.nextBytes(it) }
@@ -56,106 +62,82 @@ object PasswordEncryptor {
         val rsaEncrypted = rsa.doFinal(sessionKey)
 
         val aes = Cipher.getInstance("AES/GCM/NoPadding")
-        aes.init(Cipher.ENCRYPT_MODE, SecretKeySpec(sessionKey, "AES"),
-            GCMParameterSpec(TAG_BITS, iv))
+        aes.init(Cipher.ENCRYPT_MODE, SecretKeySpec(sessionKey, "AES"), GCMParameterSpec(TAG_BITS, iv))
         aes.updateAAD(timestamp.toByteArray(Charsets.UTF_8))
-        val out = aes.doFinal(password.toByteArray(Charsets.UTF_8))
-        val tag = out.copyOfRange(out.size - TAG_SIZE, out.size)
-        val ciphertext = out.copyOfRange(0, out.size - TAG_SIZE)
+        val gcm = aes.doFinal(password.toByteArray(Charsets.UTF_8))
+        val tag = gcm.copyOfRange(gcm.size - TAG_SIZE, gcm.size)
+        val cipherText = gcm.copyOfRange(0, gcm.size - TAG_SIZE)
 
         val rsaLen = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN)
             .putShort(rsaEncrypted.size.toShort()).array()
 
         val payload = ByteBuffer.allocate(
-            2 + IV_SIZE + 2 + rsaEncrypted.size + TAG_SIZE + ciphertext.size
+            2 + IV_SIZE + 2 + rsaEncrypted.size + TAG_SIZE + cipherText.size
         )
             .put(0x01.toByte())
-            .put(keyId.toByte())
+            .put((currentKeyId and 0xFF).toByte())
             .put(iv)
             .put(rsaLen)
             .put(rsaEncrypted)
             .put(tag)
-            .put(ciphertext)
+            .put(cipherText)
             .array()
 
-        return "#PWD_INSTAGRAM:$VERSION:$timestamp:" +
-                Base64.encodeToString(payload, Base64.NO_WRAP)
+        return "#PWD_INSTAGRAM:4:$timestamp:" + Base64.encodeToString(payload, Base64.NO_WRAP)
     }
 
-    /** Robust loader: PEM text, DER-SPKI, or DER-PKCS#1. Returns null on failure. */
-    fun buildRsaPublicKey(b64: String): PublicKey? {
-        return try {
-            val raw = Base64.decode(b64, Base64.DEFAULT)
+    /** Fallback when the RSA key could not be fetched. Version 0 = plaintext. */
+    fun plaintextPassword(password: String, timestamp: String): String =
+        "#PWD_INSTAGRAM:0:$timestamp:$password"
 
-            // 1) If it's PEM text, extract the base64 body -> DER.
-            val der = if (raw.isPem()) pemBodyToDer(raw) else raw
+    fun buildRsaPublicKey(b64: String): PublicKey? = try {
+        val decoded = Base64.decode(b64.trim(), Base64.DEFAULT)
+        val asText = runCatching { String(decoded, Charsets.US_ASCII) }.getOrNull()
+        val der = if (asText != null && asText.contains("-----BEGIN")) pemToDer(asText) else decoded
 
-            // 2) Try full X.509 SubjectPublicKeyInfo.
-            try {
-                KeyFactory.getInstance("RSA")
-                    .generatePublic(X509EncodedKeySpec(der))
-            } catch (_: Exception) {
-                // 3) Fall back to PKCS#1 RSAPublicKey (modulus + exponent only).
-                val (n, e) = parsePkcs1(der)
-                KeyFactory.getInstance("RSA")
-                    .generatePublic(RSAPublicKeySpec(n, e))
-            }
-        } catch (e: Exception) {
-            LoggingInterceptor.logNetwork(
-                "PWD", "buildRsaPublicKey failed: ${e.javaClass.simpleName}: ${e.message}"
-            )
-            null
+        runCatching {
+            KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(der))
+        }.getOrElse {
+            val (modulus, exponent) = parsePkcs1(der)
+            KeyFactory.getInstance("RSA").generatePublic(RSAPublicKeySpec(modulus, exponent))
         }
+    } catch (e: Exception) {
+        LoggingInterceptor.logNetwork("PWD", "buildRsaPublicKey failed: ${e.message}")
+        null
     }
 
-    // ------------- PEM helpers -------------
-    private fun ByteArray.isPem(): Boolean {
-        val s = String(this, 0, minOf(16, size), Charsets.US_ASCII)
-        return s.startsWith("-----BEGIN ")
-    }
-
-    private fun pemBodyToDer(pemBytes: ByteArray): ByteArray {
-        val text = String(pemBytes, Charsets.US_ASCII)
-        val body = text
+    private fun pemToDer(pem: String): ByteArray {
+        val body = pem
             .replace(Regex("-----BEGIN [A-Z ]+-----"), "")
             .replace(Regex("-----END [A-Z ]+-----"), "")
+            .replace("\\n", "")
             .replace(Regex("\\s"), "")
         return Base64.decode(body, Base64.DEFAULT)
     }
 
-    // ------------- Minimal correct DER reader for PKCS#1 -------------
-    private class Cur(val b: ByteArray, var p: Int = 0) {
-        fun u8(): Int = b[p++].toInt() and 0xff
-        fun len(): Int {
-            val first = u8()
-            if (first and 0x80 == 0) return first
-            var l = 0
-            repeat(first and 0x7f) { l = (l shl 8) or u8() }
-            return l
+    private class Der(private val b: ByteArray) {
+        var pos = 0
+        fun tag(): Int = b[pos++].toInt() and 0xFF
+        fun length(): Int {
+            val f = b[pos++].toInt() and 0xFF
+            if (f and 0x80 == 0) return f
+            var v = 0
+            repeat(f and 0x7F) { v = (v shl 8) or (b[pos++].toInt() and 0xFF) }
+            return v
         }
-        fun seqBody(): Cur {
-            u8()          // SEQUENCE tag 0x30
-            val len = len()
-            return Cur(b, p).also { _ -> this.p += len }
-        }
-        fun int(): BigInteger {
-            u8()          // INTEGER tag 0x02
-            val len = len()
-            val bytes = b.copyOfRange(p, p + len)
-            p += len
-            val sign = if (bytes[0].toInt() and 0x80 == 0) 1 else 2
-            return BigInteger(sign, bytes)
+        fun integer(): BigInteger {
+            require(tag() == 0x02) { "expected INTEGER" }
+            val len = length()
+            val bytes = b.copyOfRange(pos, pos + len)
+            pos += len
+            return BigInteger(1, bytes)
         }
     }
 
     private fun parsePkcs1(der: ByteArray): Pair<BigInteger, BigInteger> {
-        val seq = Cur(der).seqBody()
-        val modulus = seq.int()
-        val exponent = seq.int()
-        return modulus to exponent
+        val r = Der(der)
+        require(r.tag() == 0x30) { "expected SEQUENCE" }
+        r.length()
+        return r.integer() to r.integer()
     }
-
-    /** Fallback if the qe/sync header is absent or unparsable. */
-    fun plaintextPassword(password: String, timestamp: String): String =
-        "#PWD_INSTAGRAM:$VERSION:$timestamp:$password"
 }

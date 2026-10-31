@@ -5,29 +5,56 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.telephony.TelephonyManager
 
-class ConnectionInfo(context: Context) {
-    private val cm =
-        context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    private val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager?
+class ConnectionInfo(private val context: Context) {
 
-    /** WIFI / CELLULAR / ETHERNET / UNKNOWN — falls back to WIFI. */
+    private val connectivityManager: ConnectivityManager?
+        get() = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+
+    private val telephonyManager: TelephonyManager?
+        get() = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+
+    private fun activeCapabilities(): NetworkCapabilities? {
+        val cm = connectivityManager ?: return null
+        val net = cm.activeNetwork ?: return null
+        return cm.getNetworkCapabilities(net)
+    }
+
     fun type(): String {
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return "WIFI"
+        val caps = activeCapabilities() ?: return "UNKNOWN"
         return when {
             caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "WIFI"
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "CELLULAR"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "MOBILE(LTE)"
             caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ETHERNET"
-            else -> "UNKNOWN"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+            else -> "WIFI"
         }
     }
 
-    /** MCC+MNC numeric, e.g. "405840" — sent as X-FB-Net-HNI. */
-    fun networkOperator(): String = tm?.networkOperator ?: ""
+    fun networkOperator(): String {
+        val tm = telephonyManager ?: return ""
+        return tm.networkOperator?.takeIf { it.isNotBlank() }
+            ?: tm.simOperator?.takeIf { it.isNotBlank() }
+            ?: ""
+    }
 
-    /** Operator name (for internal logging). */
-    fun operatorName(): String = tm?.networkOperatorName ?: ""
+    /**
+     * Dynamically classifies link bandwidth from Android NetworkCapabilities.linkDownstreamBandwidthKbps
+     */
+    fun connectionQuality(): String {
+        val kbps = bandwidthKbps()
+        return when {
+            kbps <= 0 -> "UNKNOWN"
+            kbps < 150 -> "POOR"
+            kbps < 550 -> "MODERATE"
+            kbps < 2000 -> "GOOD"
+            else -> "EXCELLENT"
+        }
+    }
 
-    fun bandwidthKbps(): Int = 0
-
-    fun connectionQuality(): String = "EXCELLENT"
+    /**
+     * Reads real downstream bandwidth from the Android kernel network capabilities.
+     */
+    fun bandwidthKbps(): Int {
+        return activeCapabilities()?.linkDownstreamBandwidthKbps ?: 0
+    }
 }

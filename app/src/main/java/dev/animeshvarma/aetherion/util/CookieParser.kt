@@ -2,7 +2,6 @@ package dev.animeshvarma.aetherion.util
 
 import okhttp3.Headers
 
-/** Extracts the IG session cookies directly from raw Set-Cookie headers. */
 object CookieParser {
 
     data class IgSession(
@@ -11,29 +10,31 @@ object CookieParser {
         val rur: String
     )
 
-    /**
-     * Scans every Set-Cookie header for the named cookies.
-     * Ignores domain/path/secure attrs — just grabs name=value.
-     */
-    fun extract(name: String, headers: Headers): String? {
-        for (value in headers.values("Set-Cookie")) {
-            val eq = value.indexOf('=')
-            if (eq < 0) continue
-            val cookieName = value.substring(0, eq).trim()
-            if (cookieName == name) {
-                // value ends at the first ';' (attribute separator)
-                val end = value.indexOf(';', eq + 1)
-                val raw = if (end < 0) value.substring(eq + 1) else value.substring(eq + 1, end)
-                return raw.trim()
+    fun extractSession(headers: Headers): IgSession? {
+        val cookieValues = headers.values("Set-Cookie")
+        var sessionId: String? = null
+        var dsUserId = ""
+        var rur = ""
+
+        for (raw in cookieValues) {
+            val parts = raw.split(";")
+            val nameValue = parts.firstOrNull()?.trim() ?: continue
+            val eqIdx = nameValue.indexOf('=')
+            if (eqIdx <= 0) continue
+            val name = nameValue.substring(0, eqIdx).trim()
+            val value = nameValue.substring(eqIdx + 1).trim().trim('"')
+            when (name) {
+                "sessionid" -> if (value.isNotBlank()) sessionId = value
+                "ds_user_id" -> if (value.isNotBlank()) dsUserId = value
+                "rur" -> if (value.isNotBlank()) rur = value
             }
         }
-        return null
-    }
 
-    fun extractSession(headers: Headers): IgSession? {
-        val sessionId = extract("sessionid", headers) ?: return null
-        val dsUserId = extract("ds_user_id", headers) ?: ""
-        val rur = extract("rur", headers) ?: ""
-        return IgSession(sessionId, dsUserId, rur)
+        val resolvedSession = sessionId ?: return null
+        return IgSession(
+            sessionId = resolvedSession,
+            dsUserId = dsUserId,
+            rur = rur
+        )
     }
 }

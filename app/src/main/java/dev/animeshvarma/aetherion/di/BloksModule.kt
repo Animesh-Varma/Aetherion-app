@@ -1,13 +1,12 @@
 package dev.animeshvarma.aetherion.di
 
-import dev.animeshvarma.aetherion.bloks.BloksLoginOrchestrator
-import dev.animeshvarma.aetherion.network.InstagramApiClient
-import dev.animeshvarma.aetherion.util.DeviceFingerprint
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
+import dev.animeshvarma.aetherion.bloks.BloksLoginOrchestrator
+import dev.animeshvarma.aetherion.network.InstagramApiClient
+import dev.animeshvarma.aetherion.util.DeviceFingerprint
 import javax.inject.Singleton
 
 @Module

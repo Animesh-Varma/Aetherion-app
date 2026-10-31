@@ -1,29 +1,44 @@
 package dev.animeshvarma.aetherion.util
 
 object Constants {
-    // API endpoints
+    const val APP_NAME = "Aetherion"
+    const val APP_VERSION = "v0.0.1"
+
+    /**
+     * Real values dumped from the shipping APK:
+     *   versionName='455.0.0.0.0'  versionCode='386100082'
+     *
+     * The User-Agent's trailing field and these two consts are cross-checked by
+     * the server. A mismatch (or an impossible versionCode) reads as a fake
+     * client and produces error_type=needs_upgrade.
+     */
+    const val IG_VERSION = "455.0.0.0.0"
+    const val IG_VERSION_CODE = "386100082"
+    const val IG_PACKAGE_NAME = "com.instagram.android"
+
     const val BASE_URL = "https://i.instagram.com/api/v1/"
+    const val LOGIN_HOST_URL = "https://b.i.instagram.com/api/v1/"
+    const val GRAPHQL_URL = "https://i.instagram.com/graphql/query"
+    const val GRAPHQL_WWW_URL = "https://i.instagram.com/graphql_www"
+    const val REQUEST_TIMEOUT_SECONDS = 30L
 
-    // Public identifiers of the official Instagram app — identical on every install
     const val FB_ANALYTICS_APP_ID = "567067343352427"
-    const val FB_ANALYTICS_CLIENT_TOKEN = "f249176f09e26ce54212b472dbab8fa8"
-    const val ACCESS_TOKEN = "$FB_ANALYTICS_APP_ID|$FB_ANALYTICS_CLIENT_TOKEN"
-    const val APP_VERSION = "350.0.0.45.107"
+    const val BLOKS_VERSION = "35d0a096ab0bb61bad7285862888e6bca4275b4b6cbd3572b5620c88a471642f"
+    const val X_IG_CAPABILITIES = "3brTv10C"
+    const val HTTP_ENGINE = "Tigon/MNS/TCP"
 
-    // Public signing key of the app binary + bloks version
-    const val IG_SIGNATURE_KEY_HEX =
-        "040000001400000003000000474e550054f7abed2248dbcbd8b61a60f41cb908"
+    const val ATTESTATION_DOC_ID = "2342519468829449872605891687"
+    const val ATTESTATION_FRIENDLY_NAME = "IGAttestationReceiptGeneration"
+    const val ATTESTATION_ROOT_FIELD = "attestation_receipt_generation"
+
+    const val TRANSLATIONS_DOC_ID = "156105369516447605998684255875"
+    const val TRANSLATIONS_ROOT_FIELD = "fetch__XDTUserDict"
+    const val TRANSLATIONS_FRIENDLY_NAME = "TranslationsUserQuery"
+    const val GRAPHQL_CLIENT_LIBRARY = "pando"
+
+    const val FEED_CLIENT_ENDPOINT = "MainFeedFragment:feed_timeline"
+    const val PROFILE_CLIENT_ENDPOINT = "ProfileMediaTabFragment:self_profile"
+
     const val IG_SIGNATURE_KEY_VERSION = "4"
     const val SIGNATURE_VERSION_LABEL = "SIGNATURE"
-    const val BLOKS_VERSION = "b669eebdb78604327540200c145e9f16d7dc0b2a696478f43517724a88602775"
-
-    // Public capabilities string
-    const val X_IG_CAPABILITIES = "3brTvw=="
-
-    // Crypto
-    const val KEY_ALIAS = "ig_android_keystore_key"
-    const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
-
-    // Timing
-    const val REQUEST_TIMEOUT_SECONDS = 60L
 }

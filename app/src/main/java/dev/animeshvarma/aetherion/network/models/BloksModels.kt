@@ -5,5 +5,5 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class BloksAction(
     val action: String,
-    val payload: Map<String, String>? // Simplified to String for Moshi/Kotlinx compatibility
+    val payload: Map<String, String>? = null
 )

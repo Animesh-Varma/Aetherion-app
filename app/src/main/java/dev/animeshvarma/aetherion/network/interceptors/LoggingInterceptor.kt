@@ -10,14 +10,19 @@ class LoggingInterceptor : Interceptor {
 
     companion object {
         private val logEntries = mutableListOf<LogEntry>()
-        private val maxEntries = 500
+        private const val MAX_ENTRIES = 500
 
-        fun getLogs(): List<LogEntry> = logEntries.toList()
-        fun clearLogs() { logEntries.clear() }
+        fun getLogs(): List<LogEntry> = synchronized(logEntries) { logEntries.toList() }
+        fun clearLogs() = synchronized(logEntries) { logEntries.clear() }
 
         fun logNetwork(tag: String, message: String) {
             addEntry(LogEntry(System.currentTimeMillis(), tag, message, LogType.NETWORK))
             android.util.Log.d(tag, message)
+        }
+
+        fun logInfo(tag: String, message: String) {
+            addEntry(LogEntry(System.currentTimeMillis(), tag, message, LogType.INFO))
+            android.util.Log.i(tag, message)
         }
 
         fun logRequest(request: Request, requestId: String) {
@@ -33,16 +38,21 @@ class LoggingInterceptor : Interceptor {
         }
 
         fun logResponse(response: Response, requestId: String, tookMs: Long) {
-            val body = response.body?.let {
-                val source = it.source()
-                source.request(Long.MAX_VALUE)
-                source.buffer.clone().readUtf8()
-            } ?: ""
+            val body = try {
+                response.body?.let {
+                    val source = it.source()
+                    source.request(Long.MAX_VALUE)
+                    source.buffer.clone().readUtf8()
+                } ?: ""
+            } catch (e: Exception) {
+                "<binary or unreadable body: ${e.message}>"
+            }
 
             val msg = """
                 ┌─ RESPONSE [$requestId] ${response.code} ${response.message} (${tookMs}ms)
-                ├─ Headers: ${response.headers}
-                ├─ Body: $body
+                ├─ URL: ${response.request.url}
+                ├─ Headers: ${response.headers.toMultimap()}
+                ├─ Body: ${body.take(4000)}
                 └─ END
             """.trimIndent()
             addEntry(LogEntry(System.currentTimeMillis(), "RESPONSE", msg, LogType.RESPONSE, requestId))
@@ -51,14 +61,18 @@ class LoggingInterceptor : Interceptor {
         private fun addEntry(entry: LogEntry) {
             synchronized(logEntries) {
                 logEntries.add(0, entry)
-                if (logEntries.size > maxEntries) logEntries.removeLast()
+                if (logEntries.size > MAX_ENTRIES) logEntries.removeAt(logEntries.lastIndex)
             }
         }
 
         private fun bufferToString(body: okhttp3.RequestBody): String {
-            val buffer = Buffer()
-            body.writeTo(buffer)
-            return buffer.readUtf8()
+            return try {
+                val buffer = Buffer()
+                body.writeTo(buffer)
+                buffer.readUtf8()
+            } catch (e: Exception) {
+                "<unreadable request body>"
+            }
         }
     }
 
@@ -74,7 +88,7 @@ class LoggingInterceptor : Interceptor {
             logResponse(response, requestId, System.currentTimeMillis() - startTime)
             return response
         } catch (e: Exception) {
-            val msg = "Request $requestId failed: ${e.message}"
+            val msg = "Request $requestId (${request.url}) failed: ${e.message}"
             addEntry(LogEntry(System.currentTimeMillis(), "ERROR", msg, LogType.ERROR, requestId))
             throw e
         }
