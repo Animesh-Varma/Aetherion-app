@@ -145,10 +145,6 @@ class DeviceFingerprint(private val context: Context) {
 
     // ---------------- Cookies / session ----------------
 
-    /**
-     * Was `prefs.getString("csrftoken", "") ?: ""` — returned "" until the server
-     * set the cookie, so `_csrftoken` was always empty. Now generates on first use.
-     */
     var csrfToken: String
         get() {
             val existing = prefs.getString("csrftoken", null)

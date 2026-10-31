@@ -3,15 +3,6 @@ package dev.animeshvarma.aetherion.util
 object Constants {
     const val APP_NAME = "Aetherion"
     const val APP_VERSION = "v0.0.1"
-
-    /**
-     * Real values dumped from the shipping APK:
-     *   versionName='455.0.0.0.0'  versionCode='386100082'
-     *
-     * The User-Agent's trailing field and these two consts are cross-checked by
-     * the server. A mismatch (or an impossible versionCode) reads as a fake
-     * client and produces error_type=needs_upgrade.
-     */
     const val IG_VERSION = "455.0.0.0.0"
     const val IG_VERSION_CODE = "386100082"
     const val IG_PACKAGE_NAME = "com.instagram.android"
